@@ -20,7 +20,7 @@
  *
  * To understand everything else, start reading main().
  */
-#include <errno.h>
+#include <pthread.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -36,6 +36,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
+
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
@@ -234,7 +235,37 @@ static int xerrorstart(Display *dpy, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 
 /* variables */
+static pthread_cond_t evcond = PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t evlock = PTHREAD_MUTEX_INITIALIZER;
+
+enum EventSource {
+	X = 1,
+	INTERNAL,
+};
+
+enum InternalEventType {
+	BATTERY = 1,
+};
+
+struct InternalEvent {
+	enum InternalEventType type;
+	union {
+		int battery_capacity;
+	} payload;
+};
+
+struct Event {
+	enum EventSource src;
+	union {
+		XEvent xevent;
+		struct InternalEvent ievent;
+	} payload;
+};
+
+static struct Event event;
+
 static const char broken[] = "broken";
+static int bat = 5;
 static char stext[256];
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
@@ -470,6 +501,7 @@ checkotherwm(void)
 void
 cleanup(void)
 {
+	pthread_cond_destroy(&evcond);
 	Arg a = {.ui = ~0};
 	Layout foo = { "", NULL };
 	Monitor *m;
@@ -479,7 +511,7 @@ cleanup(void)
 	selmon->lt[selmon->sellt] = &foo;
 	for (m = mons; m; m = m->next)
 		while (m->stack)
-			unmanage(m->stack, 0);
+		unmanage(m->stack, 0);
 	XUngrabKey(dpy, AnyKey, AnyModifier, root);
 	while (mons)
 		cleanupmon(mons);
@@ -709,6 +741,7 @@ drawbar(Monitor *m)
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon) { /* status is only drawn on selected monitor */
 		drw_setscheme(drw, scheme[SchemeNorm]);
+		sprintf(stext, "dwm-6.6 %d%%",  bat);
 		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
 		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
 	}
@@ -1378,15 +1411,81 @@ restack(Monitor *m)
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 }
 
+void *
+xlisten(void *arg)
+{
+	XEvent ev;
+	int n = 0;
+	do {
+		/* block until the next X event */
+		n = XNextEvent(dpy, &ev);
+		pthread_mutex_lock(&evlock);
+		event.src = X;
+		event.payload.xevent = ev;
+		pthread_cond_broadcast(&evcond);
+		pthread_mutex_unlock(&evlock);
+	} while (running && !n);
+	return 0;
+}
+
+void *
+ilisten(void *arg)
+{
+	FILE *file;
+	do {
+		file = fopen("/sys/class/power_supply/BAT0/capacity", "r");
+		if (!file) {
+			fprintf(stderr, "cannot open BAT0 capacity file!\n");
+			return 0;
+		}
+
+		int cap = 0;
+		fscanf(file, "%d", &cap);
+		fclose(file);
+
+		pthread_mutex_lock(&evlock);
+		event.src = INTERNAL;
+		event.payload.ievent.type = BATTERY;
+		event.payload.ievent.payload.battery_capacity = cap;
+		pthread_cond_signal(&evcond);
+		pthread_mutex_unlock(&evlock);
+
+		sleep(4);
+	} while (running);
+
+	return 0;
+}
+
 void
 run(void)
 {
-	XEvent ev;
+	/* start state change listeners */
+	pthread_t xl, il;
+	pthread_create(&xl, 0, &xlisten, 0);
+	pthread_create(&il, 0, &ilisten, 0);
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
-		if (handler[ev.type])
-			handler[ev.type](&ev); /* call handler */
+	/* wait for signal from state listener threads */
+	pthread_mutex_lock(&evlock);
+	while (running) {
+		pthread_cond_wait(&evcond, &evlock);
+		switch (event.src) {
+			case X:
+				if (handler[event.payload.xevent.type]) {
+					handler[event.payload.xevent.type](&event.payload.xevent);
+				}
+				break;
+			case INTERNAL:
+				switch (event.payload.ievent.type) {
+					case BATTERY:
+						bat = event.payload.ievent.payload.battery_capacity;
+						drawbars();
+						break;
+				}
+				break;
+		}
+	}
+	pthread_mutex_unlock(&evlock);
 }
 
 void
