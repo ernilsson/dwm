@@ -1434,7 +1434,7 @@ xlisten(void *arg)
 }
 
 void *
-ilisten(void *arg)
+batterylisten(void *arg)
 {
 	FILE *file;
 	do {
@@ -1444,20 +1444,19 @@ ilisten(void *arg)
 			return 0;
 		}
 
-		int cap = 0;
-		fscanf(file, "%d", &cap);
+		int bc = 0;
+		fscanf(file, "%d", &bc);
 		fclose(file);
 
 		pthread_mutex_lock(&evlock);
 		event.src = INTERNAL;
 		event.payload.ievent.type = BATTERY;
-		event.payload.ievent.payload.battery_capacity = cap;
+		event.payload.ievent.payload.battery_capacity = bc;
 		pthread_cond_signal(&evcond);
 		pthread_mutex_unlock(&evlock);
 
-		sleep(4);
+		sleep(BATTERY_POLL_TIME);
 	} while (running);
-
 	return 0;
 }
 
@@ -1465,9 +1464,9 @@ void
 run(void)
 {
 	/* start state change listeners */
-	pthread_t xl, il;
+	pthread_t xl, bl;
 	pthread_create(&xl, 0, &xlisten, 0);
-	pthread_create(&il, 0, &ilisten, 0);
+	pthread_create(&bl, 0, &batterylisten, 0);
 	/* main event loop */
 	XSync(dpy, False);
 	/* wait for signal from state listener threads */
