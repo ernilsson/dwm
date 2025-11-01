@@ -264,8 +264,12 @@ struct Event {
 
 static struct Event event;
 
+struct BarState {
+	char *version;
+	int battery;
+};
+struct BarState barstate;
 static const char broken[] = "broken";
-static int bat = 5;
 static char stext[256];
 static int screen;
 static int sw, sh;           /* X display screen geometry width, height */
@@ -502,6 +506,8 @@ void
 cleanup(void)
 {
 	pthread_cond_destroy(&evcond);
+	pthread_mutex_destroy(&evlock);
+
 	Arg a = {.ui = ~0};
 	Layout foo = { "", NULL };
 	Monitor *m;
@@ -741,7 +747,6 @@ drawbar(Monitor *m)
 	/* draw status first so it can be overdrawn by tags later */
 	if (m == selmon) { /* status is only drawn on selected monitor */
 		drw_setscheme(drw, scheme[SchemeNorm]);
-		sprintf(stext, "dwm-6.6 %d%%",  bat);
 		tw = TEXTW(stext) - lrpad + 2; /* 2px right padding */
 		drw_text(drw, m->ww - tw, 0, tw, bh, 0, stext, 0);
 	}
@@ -1478,8 +1483,8 @@ run(void)
 			case INTERNAL:
 				switch (event.payload.ievent.type) {
 					case BATTERY:
-						bat = event.payload.ievent.payload.battery_capacity;
-						drawbars();
+						barstate.battery = event.payload.ievent.payload.battery_capacity;
+						updatestatus();
 						break;
 				}
 				break;
@@ -1637,6 +1642,8 @@ setmfact(const Arg *arg)
 void
 setup(void)
 {
+	barstate.version = VERSION;
+	barstate.battery = 0;
 	int i;
 	XSetWindowAttributes wa;
 	Atom utf8string;
@@ -2104,7 +2111,7 @@ void
 updatestatus(void)
 {
 	if (!gettextprop(root, XA_WM_NAME, stext, sizeof(stext)))
-		strcpy(stext, "dwm-"VERSION);
+		sprintf(stext, "dwm-%s %d%%", barstate.version, barstate.battery);
 	drawbar(selmon);
 }
 
