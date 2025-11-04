@@ -67,6 +67,15 @@ enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms *
 enum { ClkTagBar, ClkLtSymbol, ClkStatusText, ClkWinTitle,
        ClkClientWin, ClkRootWin, ClkLast }; /* clicks */
 
+enum EventSource {
+	X = 1,
+	INTERNAL,
+};
+
+enum InternalEventType {
+	BATTERY = 1,
+};
+
 typedef union {
 	int i;
 	unsigned int ui;
@@ -140,6 +149,26 @@ typedef struct {
 	int isfloating;
 	int monitor;
 } Rule;
+
+struct InternalEvent {
+	enum InternalEventType type;
+	union {
+		int battery_capacity;
+	} payload;
+};
+
+struct Event {
+	enum EventSource src;
+	union {
+		XEvent xevent;
+		struct InternalEvent ievent;
+	} payload;
+};
+
+struct BarState {
+	char *version;
+	int battery;
+};
 
 /* function declarations */
 static void applyrules(Client *c);
@@ -238,36 +267,9 @@ static void zoom(const Arg *arg);
 static pthread_cond_t evcond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t evlock = PTHREAD_MUTEX_INITIALIZER;
 
-enum EventSource {
-	X = 1,
-	INTERNAL,
-};
-
-enum InternalEventType {
-	BATTERY = 1,
-};
-
-struct InternalEvent {
-	enum InternalEventType type;
-	union {
-		int battery_capacity;
-	} payload;
-};
-
-struct Event {
-	enum EventSource src;
-	union {
-		XEvent xevent;
-		struct InternalEvent ievent;
-	} payload;
-};
 
 static struct Event event;
 
-struct BarState {
-	char *version;
-	int battery;
-};
 struct BarState barstate;
 static const char broken[] = "broken";
 static char stext[256];
